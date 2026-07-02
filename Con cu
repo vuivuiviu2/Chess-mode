@@ -1,0 +1,141 @@
+-- TỰ ĐỘNG TẠO ĐỐI TƯỢNG BỊ THIẾU ĐỂ KHÔNG BỊ LỖI LINE 130
+local lighting = game:GetService("Lighting")
+if not lighting:FindFirstChild("MainColorCorrection") then
+    local newColor = Instance.new("ColorCorrectionEffect")
+    newColor.Name = "MainColorCorrection"
+    newColor.Parent = lighting
+end
+
+-- =======================================================
+-- GIỮ NGUYÊN 100% SCRIPT CŨ CỦA BẠN DƯỚI ĐÂY
+-- =======================================================
+local ShakeConfig = {
+    Intensity = 2.5,        -- Độ mạnh/Khoảng cách lắc (Mặc định là 1. Tăng lên 2, 3... để lắc văng màn hình)
+    SpeedMultiplier = 1.5   -- Tốc độ dập dềnh/Tần số rung (Mặc định là 1. Tăng lên để giật nhanh hơn)
+}
+
+local function initializeBypassedShaker()
+    local playerCamera = workspace.CurrentCamera
+    if not playerCamera then return nil end
+
+    local currentCFrame = playerCamera.CFrame
+
+    local function cameraCallback(shakeCFrame)
+        playerCamera.CFrame = currentCFrame * shakeCFrame
+    end
+
+    local renderPriority = Enum.RenderPriority.Camera.Value + 1
+    
+    local shakerInstance = {
+        ["_running"] = false,
+        ["_renderName"] = "BypassedCameraShaker",
+        ["_renderPriority"] = renderPriority,
+        ["_camShakeInstances"] = {},
+        ["_removeInstances"] = {},
+        ["_callback"] = cameraCallback
+    }
+
+    game:GetService("RunService"):BindToRenderStep(shakerInstance._renderName, shakerInstance._renderPriority, function(deltaTime)
+        currentCFrame = playerCamera.CFrame
+        
+        local posAccumulator = Vector3.new()
+        local rotAccumulator = Vector3.new()
+        local instances = shakerInstance._camShakeInstances
+        
+        for i = 1, #instances do
+            local inst = instances[i]
+            if inst.currentFadeTime <= 0 and not inst.sustain then
+                shakerInstance._removeInstances[#shakerInstance._removeInstances + 1] = i
+            else
+                local deltaTick = inst.tick
+                local fadeTime = inst.currentFadeTime
+                local noiseVal = Vector3.new(math.noise(deltaTick, 0) * 0.5, math.noise(0, deltaTick) * 0.5, math.noise(deltaTick, deltaTick) * 0.5)
+                
+                if inst.fadeInDuration > 0 and inst.sustain then
+                    if fadeTime < 1 then
+                        fadeTime = fadeTime + deltaTime / inst.fadeInDuration
+                    else
+                        inst.sustain = false
+                    end
+                end
+                if not inst.sustain then
+                    fadeTime = fadeTime - deltaTime / inst.fadeOutDuration
+                end
+                if inst.sustain then
+                    inst.tick = deltaTick + deltaTime * inst.Roughness * inst.roughMod
+                else
+                    inst.tick = deltaTick + deltaTime * inst.Roughness * inst.roughMod * fadeTime
+                end
+                inst.currentFadeTime = fadeTime
+                
+                local shakeVector = noiseVal * inst.Magnitude * inst.magnMod * fadeTime
+                posAccumulator = posAccumulator + shakeVector * inst.PositionInfluence
+                rotAccumulator = rotAccumulator + shakeVector * inst.RotationInfluence
+            end
+        end
+        
+        for i = #shakerInstance._removeInstances, 1, -1 do
+            table.remove(instances, shakerInstance._removeInstances[i])
+            shakerInstance._removeInstances[i] = nil
+        end
+        
+        local finalCFrame = CFrame.new(posAccumulator) * CFrame.Angles(0, math.rad(rotAccumulator.Y), 0) * CFrame.Angles(math.rad(rotAccumulator.X), 0, math.rad(rotAccumulator.Z))
+        shakerInstance._callback(finalCFrame)
+    end)
+
+    shakerInstance._running = true
+    return shakerInstance
+end
+
+local activeShaker = initializeBypassedShaker()
+
+local function shakeCamera(presetName)
+    if not activeShaker then return end
+
+    local presets = {
+        ["Bump"] = {Magnitude = 2.5, Roughness = 4, FadeIn = 0.1, FadeOut = 0.75, PosInf = Vector3.new(0.15, 0.15, 0.15), RotInf = Vector3.new(1, 1, 1)},
+        ["Explosion"] = {Magnitude = 5, Roughness = 10, FadeIn = 0, FadeOut = 1.5, PosInf = Vector3.new(0.25, 0.25, 0.25), RotInf = Vector3.new(4, 1, 1)},
+        ["Earthquake"] = {Magnitude = 0.6, Roughness = 3.5, FadeIn = 2, FadeOut = 10, PosInf = Vector3.new(0.25, 0.25, 0.25), RotInf = Vector3.new(1, 1, 4)},
+        ["BadTrip"] = {Magnitude = 10, Roughness = 0.15, FadeIn = 5, FadeOut = 10, PosInf = Vector3.new(0, 0, 0.15), RotInf = Vector3.new(2, 1, 4)},
+        ["HandheldCamera"] = {Magnitude = 1, Roughness = 0.25, FadeIn = 5, FadeOut = 10, PosInf = Vector3.new(0, 0, 0), RotInf = Vector3.new(1, 0.5, 0.5)},
+        ["Vibration"] = {Magnitude = 0.4, Roughness = 20, FadeIn = 2, FadeOut = 2, PosInf = Vector3.new(0, 0.15, 0), RotInf = Vector3.new(1.25, 0, 4)},
+        ["RoughDriving"] = {Magnitude = 2, Roughness = 3, FadeIn = 1, FadeOut = 1, PosInf = Vector3.new(0, 0, 0), RotInf = Vector3.new(1, 1, 1)}
+    }
+
+    local data = presets[presetName]
+    if not data then return end
+
+    local newInstance = {
+        ["Magnitude"] = data.Magnitude,
+        ["Roughness"] = data.Roughness,
+        ["PositionInfluence"] = data.PosInf,
+        ["RotationInfluence"] = data.RotInf,
+        ["roughMod"] = ShakeConfig.SpeedMultiplier,
+        ["magnMod"] = ShakeConfig.Intensity,
+        ["fadeOutDuration"] = data.FadeOut,
+        ["fadeInDuration"] = data.FadeIn,
+        ["sustain"] = data.FadeIn > 0,
+        ["currentFadeTime"] = data.FadeIn > 0 and 0 or 1,
+        ["tick"] = Random.new():NextNumber(-100, 100)
+    }
+
+    table.insert(activeShaker._camShakeInstances, newInstance)
+end
+
+shakeCamera("Explosion")
+
+coroutine.wrap(function()
+    local part = Instance.new("Part")
+    part.Name = "Bound"
+    part.Parent = workspace
+    game.Lighting.MainColorCorrection.TintColor = Color3.fromRGB(65, 138, 255)
+    game.Lighting.MainColorCorrection.Contrast = 0.2
+    game.Lighting.MainColorCorrection.Saturation = -0.7
+    local tween = game:GetService("TweenService")
+    tween:Create(game.Lighting.MainColorCorrection, TweenInfo.new(10), {Contrast = 0}):Play()
+    tween:Create(game.Lighting.MainColorCorrection, TweenInfo.new(10), {Saturation = 0}):Play()
+    local TweenService = game:GetService("TweenService")
+    local TW = TweenService:Create(game.Lighting.MainColorCorrection, TweenInfo.new(8),{TintColor = Color3.fromRGB(255, 255, 255)})
+    TW:Play()
+end)()
+
